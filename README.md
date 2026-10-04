@@ -30,6 +30,7 @@ Tested on an M1 Pro running macOS 26.6 (Tahoe), September 2026.
 | `./tm logs` | Follows the Wine log |
 | `./tm wine <args>` | Runs a command in the prefix, e.g. `./tm wine winecfg` |
 | `./tm openplanet <installer.exe>` | Installs [Openplanet](#openplanet) |
+| `./tm fastread on\|off` | Speeds up [Openplanet plugins](#faster-plugins-experimental) (experimental) |
 | `./tm reset` | Deletes the prefix (Ubisoft Connect and the game), keeps the runtime |
 
 Launch the game with `./tm run`, not with the **Play** button in Ubisoft Connect. The button can hang on "Preparing to launch your game" under Wine.
@@ -61,6 +62,23 @@ brew install sevenzip
 ```
 
 The official installer refuses the game path under Wine, so `tm` extracts its files into the game directory instead. The installer does nothing more than copy them.
+
+#### Faster plugins (experimental)
+
+Plugins cost far more FPS under Wine than on Windows. Openplanet reads game memory with `ReadProcessMemory` on its own process, thousands of times per second, and Wine sends every such call to the `wineserver` process and waits for the answer. With MLHook and MLFeedRaceData enabled, that took an M3 Pro from ~160 to ~110 FPS.
+
+`./tm fastread on` builds [`fastread/fastread.c`](fastread/fastread.c), a small `dinput8.dll` shim, and puts it in front of Openplanet's loader (renamed `dinput8_openplanet.dll`). The shim redirects Openplanet's `ReadProcessMemory` import: reads from the game's own process are checked with `VirtualQuery` and copied directly, without a wineserver round trip. Everything else goes to the real function. With every plugin enabled, the same M3 Pro runs at 150–170 FPS.
+
+```sh
+brew install mingw-w64   # cross-compiler for the shim
+./tm fastread on
+./tm kill && ./tm run
+```
+
+`./tm fastread off` puts Openplanet's loader back. `./tm openplanet` keeps the shim when you reinstall Openplanet. If Openplanet replaces its loader by itself, the shim is silently dropped: run `./tm fastread on` again.
+
+> [!WARNING]
+> The shim modifies how Openplanet runs inside the game process. It does not touch game code, input or replays, but neither Nadeo nor the Openplanet developers have reviewed it, and Trackmania's client-side checks are not public. **There is a potential risk of an account ban or of Openplanet refusing to run in restricted (signature) modes.** Use it at your own risk, and consider `./tm fastread off` before competitive play such as Cup of the Day or ranked matches.
 
 ### Files
 

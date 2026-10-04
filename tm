@@ -28,7 +28,9 @@ export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:+$WINEDLLOVERRIDES;}dinput8=n,b"
 
 UBI_DIR="$WINEPREFIX/drive_c/Program Files (x86)/Ubisoft/Ubisoft Game Launcher"
 UBI_EXE="$UBI_DIR/UbisoftConnect.exe"
-GAME_EXE="$UBI_DIR/games/Trackmania/Trackmania.exe"
+GAME_DIR="$UBI_DIR/games/Trackmania"
+GAME_EXE="$GAME_DIR/Trackmania.exe"
+OP_LOADER=dinput8_openplanet.dll   # Openplanet's own loader while fastread is on
 
 say() { printf '\033[1m==> %s\033[0m\n' "$*"; }
 warn() { printf '\033[33mwarning: %s\033[0m\n' "$*" >&2; }
@@ -144,7 +146,36 @@ cmd_openplanet() {
   7zz x -y -o"$(dirname "$GAME_EXE")" "$installer" -x'!$PLUGINSDIR' -x'!OpenplanetUninstall.exe' >>"$LOG" 2>&1 \
     || die "could not extract $installer"
   [[ -f "$(dirname "$GAME_EXE")/Openplanet.dll" ]] || die "Openplanet.dll not found in $installer"
+  # The installer brings a fresh loader: put the shim back in front of it.
+  if [[ -f "$GAME_DIR/$OP_LOADER" ]]; then
+    mv -f "$GAME_DIR/dinput8.dll" "$GAME_DIR/$OP_LOADER"
+    cp "$DATA/fastread/dinput8.dll" "$GAME_DIR/dinput8.dll"
+  fi
   say "Openplanet installed. Restart the game: ./tm kill && ./tm run, then press F3 in game"
+}
+
+# cmd_fastread on|off
+# Openplanet reads game memory with ReadProcessMemory, which Wine routes through wineserver.
+# fastread/fastread.c is a dinput8.dll shim that serves those reads in-process; Openplanet's own
+# loader moves to dinput8_openplanet.dll. "off" puts the loader back.
+cmd_fastread() {
+  [[ -f "$GAME_DIR/Openplanet.dll" ]] || die "Install Openplanet first: ./tm openplanet <installer.exe>"
+  case "${1:-}" in
+    on)
+      command -v x86_64-w64-mingw32-gcc >/dev/null || die "mingw-w64 missing: brew install mingw-w64"
+      mkdir -p "$DATA/fastread"
+      x86_64-w64-mingw32-gcc -O2 -shared -s -static-libgcc -o "$DATA/fastread/dinput8.dll" \
+        "$ROOT/fastread/fastread.c" "$ROOT/fastread/dinput8.def" || die "could not build the shim"
+      [[ -f "$GAME_DIR/$OP_LOADER" ]] || mv "$GAME_DIR/dinput8.dll" "$GAME_DIR/$OP_LOADER"
+      cp "$DATA/fastread/dinput8.dll" "$GAME_DIR/dinput8.dll"
+      say "fastread on. Restart the game: ./tm kill && ./tm run"
+      ;;
+    off)
+      [[ -f "$GAME_DIR/$OP_LOADER" ]] && mv -f "$GAME_DIR/$OP_LOADER" "$GAME_DIR/dinput8.dll"
+      say "fastread off. Restart the game: ./tm kill && ./tm run"
+      ;;
+    *) die "usage: ./tm fastread on|off" ;;
+  esac
 }
 
 cmd_reset() {
@@ -166,6 +197,8 @@ usage: ./tm <command>
   wine <args>  run a command in the prefix, e.g. ./tm wine winecfg
   openplanet <installer.exe>
                install Openplanet (download the installer from openplanet.dev)
+  fastread on|off
+               speed up Openplanet plugins (experimental, needs mingw-w64)
   reset        delete the prefix (keeps the runtime)
 
 environment:
@@ -181,6 +214,7 @@ case "${1:-}" in
   logs) touch "$LOG" && tail -f "$LOG" ;;
   wine) shift; exec "$WINE" "$@" ;;
   openplanet) cmd_openplanet "${2:-}" ;;
+  fastread) cmd_fastread "${2:-}" ;;
   reset) cmd_reset ;;
   -h|--help|help) usage ;;
   *) usage >&2; exit 1 ;;
