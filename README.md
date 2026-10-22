@@ -65,9 +65,9 @@ The official installer refuses the game path under Wine, so `tm` extracts its fi
 
 #### Faster plugins (experimental)
 
-Plugins cost far more FPS under Wine than on Windows. Openplanet reads game memory with `ReadProcessMemory` on its own process, thousands of times per second, and Wine sends every such call to the `wineserver` process and waits for the answer. With MLHook and MLFeedRaceData enabled, that took an M3 Pro from ~160 to ~110 FPS.
+Plugins cost far more FPS under Wine than on Windows. Openplanet reads game memory with `ReadProcessMemory` thousands of times per second, and Wine turns each call into a round trip to the `wineserver` process. On an M3 Pro with MLHook and MLFeedRaceData, that drops the game from ~160 to ~110 FPS.
 
-`./tm fastread on` builds [`fastread/fastread.c`](fastread/fastread.c), a small `dinput8.dll` shim, and puts it in front of Openplanet's loader (renamed `dinput8_openplanet.dll`). The shim redirects Openplanet's `ReadProcessMemory` import: reads from the game's own process are checked with `VirtualQuery` and copied directly, without a wineserver round trip. Everything else goes to the real function. With every plugin enabled, the same M3 Pro runs at 150–170 FPS.
+`./tm fastread on` builds [`fastread/fastread.c`](fastread/fastread.c), a small `dinput8.dll` shim, and puts it in front of Openplanet's loader (renamed `dinput8_openplanet.dll`). The shim serves Openplanet's reads of the game's own memory in-process and passes everything else to the real function. The same M3 Pro runs at 150 to 170 FPS with every plugin enabled.
 
 ```sh
 brew install mingw-w64   # cross-compiler for the shim
@@ -75,10 +75,10 @@ brew install mingw-w64   # cross-compiler for the shim
 ./tm kill && ./tm run
 ```
 
-`./tm fastread off` puts Openplanet's loader back. `./tm openplanet` keeps the shim when you reinstall Openplanet. If Openplanet replaces its loader by itself, the shim is silently dropped: run `./tm fastread on` again.
+`./tm fastread off` puts Openplanet's loader back. `./tm openplanet` keeps the shim in place. If Openplanet updates its loader by itself, the shim is dropped: run `./tm fastread on` again.
 
 > [!WARNING]
-> The shim modifies how Openplanet runs inside the game process. It does not touch game code, input or replays, but neither Nadeo nor the Openplanet developers have reviewed it, and Trackmania's client-side checks are not public. **There is a potential risk of an account ban or of Openplanet refusing to run in restricted (signature) modes.** Use it at your own risk, and consider `./tm fastread off` before competitive play such as Cup of the Day or ranked matches.
+> Nadeo has not reviewed the shim, and Trackmania's anti-cheat checks are not public. It does not touch game code, input or replays, but it could in theory flag your account or stop Openplanet from running in signature modes. Off by default. Consider `./tm fastread off` before Cup of the Day or ranked.
 
 ### Files
 
@@ -126,6 +126,8 @@ shellcheck tm
 python3 -m unittest discover tests
 ```
 
+The fastread tests run the shim under Wine. They need `brew install mingw-w64` and `./tm install`, and are skipped otherwise.
+
 To update a pinned component, change its URL and SHA-256 at the top of `tm`, then test a clean install: `TM_DATA=/tmp/tm-test ./tm install`.
 
 ## Credits
@@ -134,6 +136,7 @@ To update a pinned component, change its URL and SHA-256 at the top of `tm`, the
 - [CodeWeavers](https://www.codeweavers.com): CrossOver, whose open-source Wine patches make Ubisoft Connect work
 - [Gcenx](https://github.com/Gcenx): Wine for macOS builds
 - [3Shain/dxmt](https://github.com/3Shain/dxmt)
+- [Esvalirion](https://github.com/Esvalirion): fastread, the Openplanet plugin speedup
 - [wiesson/mac-gaming](https://github.com/wiesson/mac-gaming): Chromium-under-Wine debugging notes
 
 ## Disclaimer

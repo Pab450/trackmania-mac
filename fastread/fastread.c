@@ -18,6 +18,9 @@
 typedef BOOL (WINAPI *rpm_fn)(HANDLE, LPCVOID, LPVOID, SIZE_T, SIZE_T *);
 typedef HRESULT (WINAPI *di8create_fn)(HINSTANCE, DWORD, REFIID, LPVOID *, LPUNKNOWN);
 
+/* ../tm recognizes the installed shim by this string (FASTREAD_MARKER). */
+__attribute__((used)) static const char marker[] = "fastread: Openplanet ReadProcessMemory shim";
+
 static rpm_fn real_rpm;
 static HMODULE loader;
 

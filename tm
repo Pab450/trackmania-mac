@@ -31,6 +31,7 @@ UBI_EXE="$UBI_DIR/UbisoftConnect.exe"
 GAME_DIR="$UBI_DIR/games/Trackmania"
 GAME_EXE="$GAME_DIR/Trackmania.exe"
 OP_LOADER=dinput8_openplanet.dll   # Openplanet's own loader while fastread is on
+FASTREAD_MARKER="fastread: Openplanet ReadProcessMemory shim"   # embedded in fastread/fastread.c
 
 say() { printf '\033[1m==> %s\033[0m\n' "$*"; }
 warn() { printf '\033[33mwarning: %s\033[0m\n' "$*" >&2; }
@@ -143,15 +144,47 @@ cmd_openplanet() {
   command -v 7zz >/dev/null || die "7-Zip missing: brew install sevenzip"
   say "Installing Openplanet"
   # shellcheck disable=SC2016  # $PLUGINSDIR is a literal NSIS folder name
-  7zz x -y -o"$(dirname "$GAME_EXE")" "$installer" -x'!$PLUGINSDIR' -x'!OpenplanetUninstall.exe' >>"$LOG" 2>&1 \
+  7zz x -y -o"$GAME_DIR" "$installer" -x'!$PLUGINSDIR' -x'!OpenplanetUninstall.exe' >>"$LOG" 2>&1 \
     || die "could not extract $installer"
-  [[ -f "$(dirname "$GAME_EXE")/Openplanet.dll" ]] || die "Openplanet.dll not found in $installer"
+  [[ -f "$GAME_DIR/Openplanet.dll" ]] || die "Openplanet.dll not found in $installer"
   # The installer brings a fresh loader: put the shim back in front of it.
   if [[ -f "$GAME_DIR/$OP_LOADER" ]]; then
-    mv -f "$GAME_DIR/dinput8.dll" "$GAME_DIR/$OP_LOADER"
-    cp "$DATA/fastread/dinput8.dll" "$GAME_DIR/dinput8.dll"
+    build_fastread
+    install_fastread
   fi
   say "Openplanet installed. Restart the game: ./tm kill && ./tm run, then press F3 in game"
+}
+
+# The installed dinput8.dll is the shim, not Openplanet's loader. Builds are not byte-identical
+# (PE timestamp), so the shim is recognized by a string it embeds.
+is_fastread_shim() { grep -qF "$FASTREAD_MARKER" "$GAME_DIR/dinput8.dll" 2>/dev/null; }
+
+build_fastread() {
+  command -v x86_64-w64-mingw32-gcc >/dev/null || die "mingw-w64 missing: brew install mingw-w64"
+  mkdir -p "$DATA/fastread"
+  x86_64-w64-mingw32-gcc -O2 -shared -s -static-libgcc -o "$DATA/fastread/dinput8.dll" \
+    "$ROOT/fastread/fastread.c" "$ROOT/fastread/dinput8.def" || die "could not build the shim"
+}
+
+# Moves Openplanet's loader aside, unless the shim already sits in front of it. A loader that
+# Openplanet updated by itself replaces the old copy.
+install_fastread() {
+  if ! is_fastread_shim; then
+    [[ -f "$GAME_DIR/dinput8.dll" ]] || die "Openplanet's loader is missing, reinstall it: ./tm openplanet <installer.exe>"
+    mv -f "$GAME_DIR/dinput8.dll" "$GAME_DIR/$OP_LOADER"
+  fi
+  [[ -f "$GAME_DIR/$OP_LOADER" ]] || die "Openplanet's loader is missing, reinstall it: ./tm openplanet <installer.exe>"
+  cp "$DATA/fastread/dinput8.dll" "$GAME_DIR/dinput8.dll"
+}
+
+# Puts Openplanet's loader back. If Openplanet updated it in the meantime, the old copy goes.
+uninstall_fastread() {
+  if is_fastread_shim; then
+    [[ -f "$GAME_DIR/$OP_LOADER" ]] || die "Openplanet's loader is missing, reinstall it: ./tm openplanet <installer.exe>"
+    mv -f "$GAME_DIR/$OP_LOADER" "$GAME_DIR/dinput8.dll"
+  else
+    rm -f "$GAME_DIR/$OP_LOADER"
+  fi
 }
 
 # cmd_fastread on|off
@@ -162,16 +195,12 @@ cmd_fastread() {
   [[ -f "$GAME_DIR/Openplanet.dll" ]] || die "Install Openplanet first: ./tm openplanet <installer.exe>"
   case "${1:-}" in
     on)
-      command -v x86_64-w64-mingw32-gcc >/dev/null || die "mingw-w64 missing: brew install mingw-w64"
-      mkdir -p "$DATA/fastread"
-      x86_64-w64-mingw32-gcc -O2 -shared -s -static-libgcc -o "$DATA/fastread/dinput8.dll" \
-        "$ROOT/fastread/fastread.c" "$ROOT/fastread/dinput8.def" || die "could not build the shim"
-      [[ -f "$GAME_DIR/$OP_LOADER" ]] || mv "$GAME_DIR/dinput8.dll" "$GAME_DIR/$OP_LOADER"
-      cp "$DATA/fastread/dinput8.dll" "$GAME_DIR/dinput8.dll"
+      build_fastread
+      install_fastread
       say "fastread on. Restart the game: ./tm kill && ./tm run"
       ;;
     off)
-      [[ -f "$GAME_DIR/$OP_LOADER" ]] && mv -f "$GAME_DIR/$OP_LOADER" "$GAME_DIR/dinput8.dll"
+      uninstall_fastread
       say "fastread off. Restart the game: ./tm kill && ./tm run"
       ;;
     *) die "usage: ./tm fastread on|off" ;;
