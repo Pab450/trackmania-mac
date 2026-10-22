@@ -13,6 +13,18 @@ static void check(int condition, const char *name)
     if (!condition) failures++;
 }
 
+/* fastread falls back to the real call, so on memory it declines both must agree. Wine's own
+ * answer differs by host: on Linux it reads reserved pages through /proc, on macOS it fails. */
+static void check_same_as_real(const void *addr, SIZE_T size, const char *name)
+{
+    char fast_buf[64], real_buf[64];
+    SIZE_T fast_read = 0, real_read = 0;
+    BOOL fast = fast_rpm(GetCurrentProcess(), addr, fast_buf, size, &fast_read);
+    BOOL real = ReadProcessMemory(GetCurrentProcess(), addr, real_buf, size, &real_read);
+    check(fast == real && fast_read == real_read && (!fast || !memcmp(fast_buf, real_buf, size)),
+          name);
+}
+
 static char *commit_page(DWORD protect)
 {
     return VirtualAlloc(NULL, 4096, MEM_RESERVE | MEM_COMMIT, protect);
@@ -59,11 +71,9 @@ int main(void)
     check(fast_rpm(GetCurrentProcess(), page, buf, 0, &read) && read == 0, "reads 0 bytes");
 
     /* Everything the fast path declines still behaves like ReadProcessMemory. */
-    read = 1;
-    check(!fast_rpm(GetCurrentProcess(), reserved, buf, 16, &read), "fails on reserved memory");
-    check(!fast_rpm(GetCurrentProcess(), NULL, buf, 1, &read), "fails on NULL");
-    check(!fast_rpm(GetCurrentProcess(), (void *)~(ULONG_PTR)0, buf, 16, &read),
-          "fails on a wrapping range");
+    check_same_as_real(reserved, 16, "matches the real call on reserved memory");
+    check_same_as_real(NULL, 1, "matches the real call on NULL");
+    check_same_as_real((void *)~(ULONG_PTR)0, 16, "matches the real call on a wrapping range");
 
     guarded = commit_page(PAGE_READWRITE | PAGE_GUARD);
     fast_rpm(GetCurrentProcess(), guarded, buf, 16, &read);
@@ -80,8 +90,7 @@ int main(void)
 
     pair = VirtualAlloc(NULL, 8192, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
     VirtualProtect(pair + 4096, 4096, PAGE_NOACCESS, &old);
-    check(!fast_rpm(GetCurrentProcess(), pair + 4090, buf, 16, &read),
-          "fails on a range that runs into a no-access page");
+    check_same_as_real(pair + 4090, 16, "matches the real call into a no-access page");
     check(fast_rpm(GetCurrentProcess(), pair + 4080, buf, 16, &read) && read == 16,
           "reads up to the edge of a no-access page");
 

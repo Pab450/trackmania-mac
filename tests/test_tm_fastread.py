@@ -4,6 +4,7 @@ Run: python3 -m unittest discover tests
 """
 import os
 import re
+import shutil
 import stat
 import subprocess
 import tarfile
@@ -13,6 +14,9 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TM = os.path.join(ROOT, "tm")
 GAME_SUBDIR = "prefix/drive_c/Program Files (x86)/Ubisoft/Ubisoft Game Launcher/games/Trackmania"
+# The only host commands tm and the fakes use here. PATH holds nothing else, so a real mingw-w64
+# or 7-Zip on the machine never leaks into a test.
+HOST_TOOLS = ("bash", "dirname", "grep", "mkdir", "mv", "cp", "rm", "tar")
 LOADER = b"MZ Openplanet loader v1"
 NEW_LOADER = b"MZ Openplanet loader v2"
 
@@ -42,6 +46,8 @@ class FastreadTest(unittest.TestCase):
         self.bin = os.path.join(self.tmp.name, "bin")
         os.makedirs(self.game)
         os.makedirs(self.bin)
+        for tool in HOST_TOOLS:
+            os.symlink(shutil.which(tool), os.path.join(self.bin, tool))
         self.write_game_file("Trackmania.exe", b"MZ game")
         self.write_game_file("Openplanet.dll", b"MZ Openplanet")
         self.write_game_file("dinput8.dll", LOADER)
@@ -72,9 +78,8 @@ class FastreadTest(unittest.TestCase):
         content = self.game_file(name)
         return content is not None and MARKER.encode() in content
 
-    def tm(self, *args, path=None):
-        env = dict(os.environ, TM_DATA=self.data, FASTREAD_MARKER=MARKER,
-                   PATH=path or f"{self.bin}:/usr/bin:/bin")
+    def tm(self, *args):
+        env = dict(os.environ, TM_DATA=self.data, FASTREAD_MARKER=MARKER, PATH=self.bin)
         return subprocess.run([TM, *args], env=env, capture_output=True, text=True, timeout=30)
 
     def assert_ok(self, result):
